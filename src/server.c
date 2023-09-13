@@ -49,8 +49,9 @@
 #include <haproxy/xxhash.h>
 #include <haproxy/event_hdl.h>
 
-#define TLV_DELIM          ";"
+#define TLV_DELIM          ";\n"
 #define TLV_VALUE_DELIM    "="
+#define TLV_VALUE_LEN      2048
 
 
 static void srv_update_status(struct server *s, int type, int cause);
@@ -1307,27 +1308,41 @@ static int srv_parse_send_proxy_v2(char **args, int *cur_arg,
 	return srv_enable_pp_flags(newsrv, SRV_PP_V2);
 }
 
-static struct conn_tlv_list* parse_tlv_kv(char* str, char *delim)
+static struct conn_tlv_list* parse_tlv_kv(char* str)
 {
-    char *key = NULL;
-    char *val = NULL;
-    uint16_t l;
-    struct conn_tlv_list *cur_node;
+        struct conn_tlv_list *cur_node;
+        char *key = NULL;
+        char *val = NULL;
+        char *saveptr_int = NULL;
+        uint16_t l;
 
-    key = strtok_r(str, delim, &val);
-    val = strtok_r(NULL, delim, &val);
-    l = (uint16_t)strlen(val);
+        key = strtok_r(str, TLV_VALUE_DELIM, &saveptr_int);
+        if (key == NULL) {
+                 ha_warning("'%s' ignoring TLV, invalid key.\n", str);
+                 return NULL;
+        }
 
-    cur_node = (struct conn_tlv_list*)malloc(sizeof(struct conn_tlv_list) + l + 1);
-    if (cur_node == NULL) {
-        return NULL;
-    }
+        val = strtok_r(NULL, TLV_VALUE_DELIM, &saveptr_int);
+        if (val == NULL) {
+                ha_warning("'%s' ignoring TLV, invalid value.\n", str);
+                return NULL;
+        }
+
+        l = (uint16_t)strlen(val);
+        if (l > TLV_VALUE_LEN) {
+                ha_warning("'%s' ignoring TLV, invalid length.\n", str);
+                return NULL;
+        }
+
+        cur_node = (struct conn_tlv_list*)malloc(sizeof(struct conn_tlv_list) + l + 1);
+        if (cur_node == NULL)
+                return NULL;
 
 	LIST_INIT(&cur_node->list);
-    
-    cur_node->type = (uint8_t)strtol(key, NULL, 0);
-    strncpy((char*)cur_node->value, val, l);
-    cur_node->value[l] = '\0';
+
+        cur_node->type = (uint8_t)strtol(key, NULL, 0);
+        strncpy((char*)cur_node->value, val, l);
+        cur_node->value[l] = '\0';
 	cur_node->len = l;
 
 	return cur_node;
@@ -1335,24 +1350,22 @@ static struct conn_tlv_list* parse_tlv_kv(char* str, char *delim)
 
 /* parse TLVs in config file */
 /* 0xe0=this-is-tlv-value;0x30=tlv-123456; */
-static int parse_tlv(struct server *newsrv, char* value, char *delim) 
+static int parse_tlv(struct server *newsrv, char* value)
 {
-	struct conn_tlv_list *node;
-    char *ret_ptr = NULL;
-    char *next_ptr = NULL;
+        struct conn_tlv_list *node;
+        char *ret_ptr = NULL;
+        char *saveptr_ext = NULL;
 	int cnt=0;
 
-    ret_ptr = strtok_r(value, delim, &next_ptr);
-
-    while(ret_ptr) {
-        node = parse_tlv_kv(ret_ptr, TLV_VALUE_DELIM);
+        ret_ptr = strtok_r(value, TLV_DELIM, &saveptr_ext);
+        while(ret_ptr) {
+                node = parse_tlv_kv(ret_ptr);
 		if (node != NULL) {
 			LIST_APPEND(&newsrv->tlv_list, &node->list);
 			cnt ++;
 		}
-
-        ret_ptr = strtok_r(NULL, delim, &next_ptr);
-    }
+                ret_ptr = strtok_r(NULL, TLV_DELIM, &saveptr_ext);
+        }
 
 	return cnt;
 }
@@ -1370,7 +1383,7 @@ static int srv_parse_set_proxy_v2_tlv(char **args, int *cur_arg,
 	}
 
 	*cur_arg += 1;
-    parse_tlv(newsrv, value, TLV_DELIM);
+        parse_tlv(newsrv, value);
 
 	srv_enable_pp_flags(newsrv, SRV_PP_V2);
 	srv_enable_pp_flags(newsrv, SRV_PP_V2_SET_TLV);
@@ -2566,10 +2579,10 @@ void srv_free_params(struct server *srv)
 }
 
 /* free tlvs belongs to svr, joyent */
-void srv_free_tlv_nodes(struct server *srv) 
+void srv_free_tlv_nodes(struct server *srv)
 {
-    struct conn_tlv_list *node, *back;
-	
+        struct conn_tlv_list *node, *back;
+
 	list_for_each_entry_safe(node, back, &srv->tlv_list, list) {
 		LIST_DEL_INIT(&node->list);
 		free(node);
