@@ -1335,7 +1335,7 @@ static struct conn_tlv_list* parse_tlv_kv(char* str)
         }
 
         cur_node = (struct conn_tlv_list*)malloc(sizeof(struct conn_tlv_list) + l + 1);
-        if (cur_node == NULL)
+        if (unlikely(!cur_node))
                 return NULL;
 
 	LIST_INIT(&cur_node->list);
