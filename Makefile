@@ -499,7 +499,7 @@ ifeq ($(VERDATE),)
 endif
 
 # this one is always empty by default and appended verbatim
-EXTRAVERSION = -joyent
+EXTRAVERSION = -joyent_c
 
 #### Build options
 # Do not change these ones, enable USE_* variables instead.
