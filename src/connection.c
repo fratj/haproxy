@@ -2449,6 +2449,7 @@ int smp_fetch_fc_pp_tlvs(const struct arg *args, struct sample *smp, const char 
 		if (max_len && tot_len > max_len)
 			/* Reached the max header length */
 			break;
+		/* L1182: tlv->len < HA_PP2_MAX_ALLOC always true */
 		strncpy(tlv_value, tlv->value, tlv->len);
 		tlv_value[tlv->len] = '\0';
 		chunk_appendf(buf, fmt, tlv->type, tlv_value);
