@@ -2506,6 +2506,16 @@ static int smp_check_tlv_type(struct arg *args, char **err)
 	return 1;
 }
 
+static int smp_check_tlvs_type(struct arg *args, char **err)
+{
+	if (args[0].data.sint < 0) {
+		memprintf(err, "Invalid length '%lli'", args[0].data.sint);
+		return 0;
+	}
+
+	return 1;
+}
+
 /* fetch an arbitrary TLV from a PROXY protocol v2 header */
 int smp_fetch_fc_pp_tlv(const struct arg *args, struct sample *smp, const char *kw, void *private)
 {
@@ -2542,6 +2552,62 @@ int smp_fetch_fc_pp_tlv(const struct arg *args, struct sample *smp, const char *
 	smp->flags &= ~SMP_F_NOT_LAST;
 
 	return 0;
+}
+
+/* fetch all TLVs from a PROXY protocol v2 header */
+int smp_fetch_fc_pp_tlvs(const struct arg *args, struct sample *smp, const char *kw, void *private)
+{
+#define TLV_KEY_LEN 5  /* TLV key length, i.e 0x00= */
+	int len, tot_len, max_len;
+	struct connection *conn = NULL;
+	struct conn_tlv_list *tlv;
+	struct buffer *buf;
+	char tlv_value[HA_PP2_MAX_ALLOC+1];
+	char *fmt;
+
+	conn = objt_conn(smp->sess->origin);
+	if (!conn)
+		return 0;
+
+	if (conn->flags & CO_FL_WAIT_XPRT) {
+		smp->flags |= SMP_F_MAY_CHANGE;
+		return 0;
+	}
+
+	buf = alloc_trash_chunk();
+	if (unlikely(!buf)) {
+		smp->flags |= SMP_F_MAY_CHANGE;
+		return 0;
+	}
+
+	tot_len = 0;
+	max_len = args[0].data.sint;
+
+	list_for_each_entry(tlv, &conn->tlv_list, list) {
+		len = tlv->len + TLV_KEY_LEN;
+		if (tot_len) {
+			fmt = ";0x%02X=%s";
+			tot_len += len + 1;
+		} else {
+			/* This is the first pair */
+			fmt = "0x%02X=%s";
+			tot_len += len;
+		}
+		if (max_len && tot_len > max_len)
+			/* Reached the max header length */
+			break;
+		/* L1182: tlv->len < HA_PP2_MAX_ALLOC always true */
+		strncpy(tlv_value, tlv->value, tlv->len);
+		tlv_value[tlv->len] = '\0';
+		chunk_appendf(buf, fmt, tlv->type, tlv_value);
+	}
+
+	chunk_dup(&smp->data.u.str, buf);
+	free_trash_chunk(buf);
+	smp->flags &= ~SMP_F_NOT_LAST;
+	smp->data.type = SMP_T_STR;
+
+	return 1;
 }
 
 /* fetch the authority TLV from a PROXY protocol header */
@@ -2648,6 +2714,7 @@ static struct sample_fetch_kw_list sample_fetch_keywords = {ILH, {
 	{ "fc_pp_authority", smp_fetch_fc_pp_authority, 0, NULL, SMP_T_STR, SMP_USE_L4CLI },
 	{ "fc_pp_unique_id", smp_fetch_fc_pp_unique_id, 0, NULL, SMP_T_STR, SMP_USE_L4CLI },
 	{ "fc_pp_tlv", smp_fetch_fc_pp_tlv, ARG1(1, STR), smp_check_tlv_type, SMP_T_STR, SMP_USE_L4CLI },
+	{ "fc_pp_tlvs", smp_fetch_fc_pp_tlvs, ARG1(0, SINT), smp_check_tlvs_type, SMP_T_STR, SMP_USE_L4CLI },
 	{ /* END */ },
 }};
 
